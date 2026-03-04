@@ -1,3 +1,4 @@
+import os
 import json
 import sqlite3
 from pathlib import Path
@@ -5,6 +6,8 @@ from typing import Any, Dict, List, Optional
 import sys
 from datetime import datetime
 
+# TODO: Expand costumization options for import
+# Allow for my idea of disallowing certain tags, studios, licensors, producers, etc. to be imported
 # When to consider it a quality anime?
 QUALITY_SCORE: int = 6
 # What image type to get
@@ -534,7 +537,7 @@ def import_json_to_sqlite(json_path: Path, db_path: Path) -> None:
         tag_count = cursor.fetchone()[0]
         
         print(f"\n{'='*50}")
-        print(f"✓ Import complete!")
+        print(f"Import complete!")
         print(f"{'='*50}")
         print(f"  Anime imported:          {total_records}")
         print(f"  Errors encountered:      {error_count}")
@@ -578,6 +581,15 @@ def main():
     )
     
     args = parser.parse_args()
+
+    if os.path.exists(args.output):
+        print(f"Warning: Output database file already exists, renaming to {args.output}.old");
+        try:
+            os.rename(args.output, args.output.with_suffix('.db.old'))
+            print(f"Renamed existing database to {args.output.with_suffix('.db.old')}")
+        except Exception as e:
+            print(f"Error renaming existing database: {e}", file=sys.stderr)
+            sys.exit(1)
     
     print(f"\n{'='*50}")
     print(f"Anime Database Import Tool")
