@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import sys
 from datetime import datetime
 
-DATABASE_MODEL = "./../sql/pm/physical_model.sql"
+DATABASE_MODEL = "./../sql/pm/physical_model_1.sql"
 
 # TODO: Expand costumization options for import
 # Allow for my idea of disallowing certain tags, studios, licensors, producers, etc. to be imported
@@ -32,7 +32,6 @@ def create_tables(conn: sqlite3.Connection) -> None:
     cursor.execute("DROP TABLE IF EXISTS licensors")
     cursor.execute("DROP TABLE IF EXISTS producers")
     cursor.execute("DROP TABLE IF EXISTS anime")
-    cursor.execute("DROP TABLE IF EXISTS language")
     cursor.execute("DROP TABLE IF EXISTS anime_status")
     cursor.execute("DROP TABLE IF EXISTS anime_type")
     
@@ -81,17 +80,17 @@ def insert_or_get_entity(cursor: sqlite3.Cursor, table: str,
     
     # Insert new entity
     try:
-        if table == 'studios':
-            # Studios table doesn't have type field
-            cursor.execute(f"""
-                INSERT INTO {table} (id, name, url)
-                VALUES (?, ?, ?)
-            """, (mal_id, name, url))
-        else:
+        if table == 'tags':
+            # For tags, we also need to store the type (genre, theme, demographic, explicit_genre)
             cursor.execute(f"""
                 INSERT INTO {table} (id, name, type, url)
                 VALUES (?, ?, ?, ?)
             """, (mal_id, name, entity_type, url))
+        else:
+            cursor.execute(f"""
+                INSERT INTO {table} (id, name, url)
+                VALUES (?, ?, ?)
+            """, (mal_id, name, url))
         return mal_id
     except sqlite3.IntegrityError:
         cursor.execute(f"SELECT id FROM {table} WHERE id = ?", (mal_id,))
@@ -181,15 +180,12 @@ def insert_anime(conn: sqlite3.Connection, anime_data: Dict[str, Any]) -> Option
         
         combined_description = ''.join(description_parts)
         
-        # Insert English description (assuming API data is in English)
+        # Insert description 
         if combined_description:
-            cursor.execute("SELECT id FROM language WHERE name = ?", ('English',))
-            english_id = cursor.fetchone()[0]
-            
             cursor.execute("""
-                INSERT OR REPLACE INTO anime_descriptions (anime_id, language_id, description)
-                VALUES (?, ?, ?)
-            """, (mal_id, english_id, combined_description))
+                INSERT OR REPLACE INTO anime_descriptions (anime_id, description)
+                VALUES (?, ?)
+            """, (mal_id, combined_description))
         
         # Insert title variants
         titles = anime_data.get('titles', [])

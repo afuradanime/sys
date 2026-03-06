@@ -3,11 +3,12 @@ import json
 import time
 from typing import Dict, Any, List
 
-BASE_URL = "https://api.jikan.moe/v4/anime"
+ANIME_BASE_URL = "https://api.jikan.moe/v4/anime";
+SLEEP_AMOUNT = 1;
 
 def extract_anime_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transforms raw API data into the Clean Domain Model.
+    Transforms raw API data
     """
     # Basic info
     mal_id = raw_data.get('mal_id')
@@ -157,27 +158,104 @@ def extract_anime_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
         "demographics": demographics
     }
 
-def run_scraper(output_file: str):
+def run_scraper(args):
+    if args.scrape_target == "anime":
+        scrape_anime(args.output);
+    elif args.scrape_target == "relations":
+        if not args.anime_data:
+            print("--anime-data is required when scraping relations.");
+            return;
+    
+        scrape_relations(args.output, args.anime_data);
+    else:
+        print(f"Invalid scrape target: {args.scrape_target}. Use 'anime' or 'relations'.");
+
+def scrape_relations(output_file: str, anime_data_file: str):
+    """
+    Scrapes anime relations data from Jikan API for each anime in the provided anime data file.
+    """
+
+    start_time = time.time();
+    
+    session = requests.Session()  # Use a session for connection pooling
+
+    with open(anime_data_file, 'r', encoding='utf-8') as anime_file, \
+            open(output_file, 'w', encoding='utf-8') as relations_file:
+        
+        total_saved = 0;
+
+        # Process each anime and scrape its relations
+        for line in anime_file:
+            anime_entry = json.loads(line);
+            id = anime_entry['id'];
+
+            # Scrape relations for this anime
+            url = f"{ANIME_BASE_URL}/{id}/relations"
+            try:
+                response = session.get(url)
+                while response.status_code == 429:  # Handle rate limits
+                    print(f"\nRate limit hit for anime ID {id}. Sleeping for 10 seconds...")
+                    time.sleep(10)
+                    response = session.get(url)
+                
+                response.raise_for_status()
+                
+                relations_data = response.json().get('data', [])
+                
+                # Save each relation as a separate line in the output file
+                for relation in relations_data:
+
+                    relation_entry = {
+                        "anime_id": id,
+                        "relation_type": relation.get('relation'),
+                        "related_anime": relation.get('entry', [])
+                    };
+                    
+                    relations_file.write(json.dumps(relation_entry) + "\n");
+                    total_saved += 1;
+
+                time.sleep(SLEEP_AMOUNT);
+                if total_saved % 1000 == 0:
+                    print(f"\n--- {total_saved} relations saved! ---");
+            
+            except Exception as e:
+                print(f"\nError fetching relations for anime ID {id}: {e}");
+                time.sleep(5);
+
+    end_time = time.time();
+    elapsed_time = end_time - start_time;
+
+    print(f"\nScraping relations completed in {elapsed_time:.2f} seconds.");
+    print(f"\nDone! Total relations saved: {total_saved}");
+    print(f"Data stored in {output_file}");
+
+def scrape_anime(output_file: str):
+    """
+    Scrapes anime data from Jikan API and saves it to a JSON file.
+    """
+
+    start_time = time.time()
+
     page = 1
     total_saved = 0
     consecutive_errors = 0
     
+    session = requests.Session()  # Use a session for connection pooling
+
     print("Starting scraper. Press Ctrl+C to stop manually.")
     
     with open(output_file, 'w', encoding='utf-8') as f:
         while True:
             try:
-                # print(f"Fetching page {page}...", end='\r') # Optional: Keep console clean
+                response = session.get(f"{ANIME_BASE_URL}?page={page}")
                 
-                response = requests.get(f"{BASE_URL}?page={page}")
-                
-                # Handling Rate Limits (429)
+                # Handle rate limits
                 if response.status_code == 429:
                     print(f"\nRate limit hit on page {page}. Sleeping for 10 seconds...")
                     time.sleep(10)
                     continue
                 
-                # Handling Server Errors (500s)
+                # Handling Server Errors
                 if response.status_code >= 500:
                     print(f"\nServer error {response.status_code} on page {page}. Retrying...")
                     consecutive_errors += 1
@@ -215,8 +293,7 @@ def run_scraper(output_file: str):
                     break
                 
                 page += 1
-                
-                time.sleep(1) 
+                time.sleep(SLEEP_AMOUNT) 
                 
             except KeyboardInterrupt:
                 print("\nScraper stopped by user.")
@@ -224,6 +301,11 @@ def run_scraper(output_file: str):
             except Exception as e:
                 print(f"\nUnexpected error on page {page}: {e}")
                 time.sleep(5)
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+
+    print(f"\nScraping completed in {elapsed_time:.2f} seconds.")
 
     print(f"\nDone! Total anime saved: {total_saved}")
     print(f"Data stored in {output_file}")
@@ -235,15 +317,29 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(
         description="Scrape MAL data from jikan"
-    )
+    );
 
     parser.add_argument(
         "--output",
         type=Path,
         default=Path("anime_data_all.jsonl"),
         help="Path to output json file (default: anime_data_all.jsonl)"
-    )
-    
-    args = parser.parse_args()
+    );
 
-    run_scraper(args.output)
+    parser.add_argument(
+        "--scrape-target",
+        type=str,
+        default="anime",
+        help="Type of data to scrape (anime | relations)"
+    );
+    
+    parser.add_argument(
+        "--anime-data",
+        type=Path,
+        required=False,
+        help="Path to anime data file you got from running 'python scraper.py --scrape-target anime' (required if scraping relations)"
+    );
+    
+    args = parser.parse_args();
+
+    run_scraper(args);
