@@ -1,3 +1,1 @@
-scripts/backups/**.backup
-scripts/token.json
-scripts/credentials.json
+scripts/_backups/**.backup
