@@ -23,6 +23,25 @@ INSERT INTO anime_status (name) VALUES
     ('Not yet aired'),
     ('Unknown');
 
+CREATE TABLE relation_types (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL  -- 'prequel', 'sequel', 'side story', 'parent story', 'summary', 'alternative version', 'alternative setting', 'spin-off', 'other'
+);
+
+INSERT INTO relation_types (name) VALUES
+    ('Parent Story'),
+    ('Sequel'),
+    ('Character'),
+    ('Other'),
+    ('Spin-Off'),
+    ('Summary'),
+    ('Adaptation'),
+    ('Alternative Version'),
+    ('Side Story'),
+    ('Full Story'),
+    ('Alternative Setting'),
+    ('Prequel');
+
 CREATE TABLE anime (
     id INTEGER PRIMARY KEY,  -- MAL ID
     url TEXT,
@@ -122,6 +141,16 @@ CREATE TABLE anime_tags (
     FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
 
+CREATE TABLE anime_relations (
+    anime_id INTEGER NOT NULL,
+    relation_type_id INTEGER NOT NULL,
+    related_anime_id INTEGER NOT NULL,
+    PRIMARY KEY (anime_id, relation_type_id, related_anime_id),
+    FOREIGN KEY (anime_id) REFERENCES anime(id) ON DELETE CASCADE,
+    FOREIGN KEY (relation_type_id) REFERENCES relation_types(id) ON DELETE CASCADE,
+    FOREIGN KEY (related_anime_id) REFERENCES anime(id) ON DELETE CASCADE
+);
+
 -- Index for filtering by anime season
 CREATE INDEX idx_anime_year_season ON anime(year, season);
 -- Index for filtering currently airing anime
@@ -139,6 +168,15 @@ CREATE INDEX idx_tags_type_name ON tags(type, name);
 -- Index for finding all anime by a studio
 CREATE INDEX idx_anime_studios_studio_id ON anime_studios(studio_id);
 CREATE INDEX idx_anime_studios_anime_id ON anime_studios(anime_id);
+-- Index for finding all anime by a producer
+CREATE INDEX idx_anime_producers_producer_id ON anime_producers(producer_id);
+CREATE INDEX idx_anime_producers_anime_id ON anime_producers(anime_id);
+-- Index for finding all anime by a licensor
+CREATE INDEX idx_anime_licensors_licensor_id ON anime_licensors(licensor_id);
+CREATE INDEX idx_anime_licensors_anime_id ON anime_licensors(anime_id);
+-- Index for finding related anime
+CREATE INDEX idx_anime_relations_anime_id ON anime_relations(anime_id);
+CREATE INDEX idx_anime_relations_related_anime_id ON anime_relations(related_anime_id);
 -- Index for getting descriptions by anime_id
 CREATE INDEX idx_anime_descriptions_anime_id ON anime_descriptions(anime_id);
 

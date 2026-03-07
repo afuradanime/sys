@@ -2,18 +2,19 @@ import os
 import json
 import sqlite3
 from pathlib import Path
+import configparser
 from typing import Any, Dict, List, Optional
 import sys
 from datetime import datetime
 
-DATABASE_MODEL = "./../sql/pm/physical_model_1.sql"
+CONFIG_FILE = "./import_config.ini";
 
-# TODO: Expand costumization options for import
-# Allow for my idea of disallowing certain tags, studios, licensors, producers, etc. to be imported
-# When to consider it a quality anime?
-QUALITY_SCORE: int = 6
-# What image type to get
-IMAGE_TYPE: str = "webp"
+DATABASE_MODEL: str = "./../sql/pm/physical_model_1.sql";
+IMAGE_TYPE: str = "webp";
+USE_QUALITY_FILTERING: bool = True;
+QUALITY_TIERS: int = 3;
+BLACKLISTED_TAGS: List[str] = [];
+BLACKLISTED_TYPES: List[str] = [];
 
 def create_tables(conn: sqlite3.Connection) -> None:
     """Create SQLite tables based on the new physical schema."""
@@ -41,6 +42,39 @@ def create_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
     print("Database schema created")
 
+TIER_DIVISION = 10.0 / QUALITY_TIERS;
+def calculate_quality_score(score: Optional[float]) -> int:
+    if score is None or not USE_QUALITY_FILTERING:
+        return -1;
+
+    return int(score / TIER_DIVISION);
+
+def blacklist_check(anime_data: Dict[str, Any]) -> bool:
+    """Check if anime should be blacklisted based on tags and type."""
+
+    if anime_data.get('type', '') == None:
+        return False;
+
+    anime_type = anime_data.get('type', '').lower()
+    if anime_type in (t.lower() for t in BLACKLISTED_TYPES):
+        return True
+
+    all_tags = []
+    for field in ['genres', 'themes', 'demographics', 'explicit_genres']:
+        tags = anime_data.get(field, [])
+        if isinstance(tags, list):
+            all_tags.extend(tags)
+
+    for tag in all_tags:
+
+        if tag.get('name') == None:
+            continue;
+
+        tag_name = tag.get('name', '').lower()
+        if tag_name in (t.lower() for t in BLACKLISTED_TAGS):
+            return True
+
+    return False
 
 def get_or_create_type_id(cursor: sqlite3.Cursor, type_name: str) -> int:
     """Get type_id from anime_type table."""
@@ -131,7 +165,7 @@ def insert_anime(conn: sqlite3.Connection, anime_data: Dict[str, Any]) -> Option
         
         # Quality score flag
         score = anime_data.get('score')
-        quality_score = 1 if score and score > QUALITY_SCORE else 0
+        quality_score = calculate_quality_score(score);
         
         # Dates
         start_date = anime_data.get('start_date')
@@ -151,6 +185,10 @@ def insert_anime(conn: sqlite3.Connection, anime_data: Dict[str, Any]) -> Option
         
         # Trailer
         trailer_embed_url = anime_data.get('trailer_embed_url')
+
+        if blacklist_check(anime_data):
+            # print(f"Skipping blacklisted anime: {title} (ID: {mal_id})", file=sys.stderr);
+            return None;
         
         # Insert main anime record
         cursor.execute("""
@@ -290,6 +328,7 @@ def import_json_to_sqlite(json_path: Path, db_path: Path) -> None:
     
     total_records = 0
     error_count = 0
+    skip_count = 0;
     
     try:
         print(f"\nReading from: {json_path}")
@@ -326,7 +365,7 @@ def import_json_to_sqlite(json_path: Path, db_path: Path) -> None:
                         print(f"Processed {total_records} records...")
                         conn.commit()
                 else:
-                    error_count += 1
+                    skip_count += 1
                     
             except Exception as e:
                 error_count += 1
@@ -350,6 +389,7 @@ def import_json_to_sqlite(json_path: Path, db_path: Path) -> None:
         print(f"{'='*50}")
         print(f"  Anime imported:          {total_records}")
         print(f"  Errors encountered:      {error_count}")
+        print(f"  Records skipped:         {skip_count}")
         print(f"  Total anime in DB:       {anime_count}")
         print(f"  Unique studios:          {studio_count}")
         print(f"  Unique tags:             {tag_count}")
@@ -369,6 +409,117 @@ def import_json_to_sqlite(json_path: Path, db_path: Path) -> None:
         conn.close()
 
 
+def import_json_relations_to_sqlite(json_path: Path, db_path: Path) -> None:
+    """Import anime relations from JSON into SQLite database."""
+    
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON")
+    
+    total_relations = 0
+    error_count = 0
+    
+    try:
+        print(f"\nReading relations from: {json_path}")
+        
+        with open(json_path, 'r', encoding='utf-8') as f:
+            first_char = f.read(1)
+            f.seek(0)
+            
+            if first_char == '[':
+                data = json.load(f)
+                relations_list = data if isinstance(data, list) else [data]
+            else:
+                relations_list = []
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            relations_list.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+        
+        print(f"Found {len(relations_list)} anime relations to import\n")
+        
+        cursor = conn.cursor()
+        
+        for relation_data in relations_list:
+            try:
+                anime_id = relation_data.get('anime_id')
+                related_anime_id_list = relation_data.get('related_anime', [])
+                relation_type = relation_data.get('relation_type')
+                
+                if not anime_id or not related_anime_id_list or not relation_type:
+                    continue
+
+                # Check if anime ID exists in DB
+                cursor.execute("SELECT 1 FROM anime WHERE id = ?", (anime_id,))
+                if not cursor.fetchone():
+                    continue;
+
+                # Get relation_type_id from relation_types table
+                cursor.execute("SELECT id FROM relation_types WHERE name = ?", (relation_type,))
+                relation_type_id = cursor.fetchone()
+                if not relation_type_id:
+                    # If the relation type doesn't exist, skip it
+                    print(f"Unknown relation type: {relation_type}, skipping.")
+                    continue
+                relation_type_id = relation_type_id[0]  # Extract ID
+
+                # Insert relations into anime_relations table
+                for related_anime in related_anime_id_list:
+                    # Skip manga for now
+                    if related_anime.get('type') != 'anime':
+                        continue;
+
+                    related_anime_id = related_anime.get('mal_id');
+
+                    # check related anime exists
+                    cursor.execute("SELECT 1 FROM anime WHERE id = ?", (related_anime_id,))
+                    if not cursor.fetchone():
+                        continue
+                    
+                    # Insert the relation into anime_relations
+                    # It seems there are repeats?
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO anime_relations (anime_id, relation_type_id, related_anime_id)
+                        VALUES (?, ?, ?)
+                    """, (anime_id, relation_type_id, related_anime_id))
+                
+                total_relations += 1
+                
+                if total_relations % 1000 == 0:
+                    print(f"Processed {total_relations} relations...")
+                    conn.commit()
+            except Exception as e:
+                error_count += 1
+                print(f"Error processing relation: {e}", file=sys.stderr)
+        
+        conn.commit()
+        
+        print(f"\n{'='*50}")
+        print(f"Relations import complete!")
+        print(f"{'='*50}")
+        print(f"  Relations imported:      {total_relations}")
+        print(f"  Errors encountered:      {error_count}")
+        print(f"{'='*50}\n")
+    
+    except Exception as e:
+        print(f"Error reading JSON file: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"Error reading JSON file: {e}", file=sys.stderr)
+    except FileNotFoundError:
+        print(f"Error: JSON file not found: {json_path}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON format: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Fatal error: {e}", file=sys.stderr);
+        conn.rollback();
+        sys.exit(1);
+    finally:
+        conn.close();
+
 def main():
     """Main function."""
     import argparse
@@ -382,6 +533,14 @@ def main():
         required=True,
         help="Path to JSON/JSONL input file"
     )
+
+    parser.add_argument(
+        "--input-relations",
+        type=Path,
+        required=False,
+        help="Path to JSON/JSONL input file for anime relations (optional)"
+    )
+
     parser.add_argument(
         "--output",
         type=Path,
@@ -394,21 +553,55 @@ def main():
     if os.path.exists(args.output):
         print(f"Warning: Output database file already exists, renaming to {args.output}.old");
         try:
-            os.rename(args.output, args.output.with_suffix('.db.old'))
-            print(f"Renamed existing database to {args.output.with_suffix('.db.old')}")
+            if args.output.with_suffix('.db.old').exists():
+                os.remove(args.output.with_suffix('.db.old'));
+
+            os.rename(args.output, args.output.with_suffix('.db.old'));
+            print(f"Renamed existing database to {args.output.with_suffix('.db.old')}");
         except Exception as e:
-            print(f"Error renaming existing database: {e}", file=sys.stderr)
-            sys.exit(1)
+            print(f"Error renaming existing database: {e}", file=sys.stderr);
+            sys.exit(1);
     
+    cfg = configparser.ConfigParser()
+    if Path(CONFIG_FILE).exists():
+        cfg.read(CONFIG_FILE);
+        
+        global IMAGE_TYPE, USE_QUALITY_FILTERING, QUALITY_TIERS, BLACKLISTED_TAGS, BLACKLISTED_TYPES, DATABASE_MODEL;
+        
+        DATABASE_MODEL = cfg.get("Database", "import_script", fallback=DATABASE_MODEL);
+        IMAGE_TYPE = cfg.get("Import", "image_type", fallback=IMAGE_TYPE);
+        
+        USE_QUALITY_FILTERING = cfg.getboolean("Import", "use_quality_filtering", fallback=USE_QUALITY_FILTERING);
+        QUALITY_TIERS = cfg.getint("Import", "quality_tiers", fallback=QUALITY_TIERS);
+        
+        BLACKLISTED_TAGS = json.loads(cfg.get("Import", "blacklisted_tags", fallback="[]"));
+        BLACKLISTED_TYPES = json.loads(cfg.get("Import", "blacklisted_types", fallback="[]"));
+    else:
+        print(f"Warning: Config file {CONFIG_FILE} not found, using default settings.", file=sys.stderr);
+
     print(f"\n{'='*50}")
     print(f"Anime Database Import Tool")
     print(f"{'='*50}")
     print(f"Input file:  {args.input}")
     print(f"Output DB:   {args.output}")
+
+    print(f"\nConfiguration:")
+    print(f"  Database model:          {DATABASE_MODEL}")
+    print(f"  Image type:              {IMAGE_TYPE}")
+    print(f"  Use quality filtering:   {USE_QUALITY_FILTERING}")
+    print(f"  Quality tiers:           {QUALITY_TIERS}")
+    print(f"  Blacklisted tags:        {BLACKLISTED_TAGS}")
+    print(f"  Blacklisted types:       {BLACKLISTED_TYPES}")
+
     print(f"{'='*50}\n")
     
     import_json_to_sqlite(args.input, args.output)
 
+    # Only import relations if the file is provided
+    if args.input_relations and os.path.exists(args.input_relations):
+        import_json_relations_to_sqlite(args.input_relations, args.output);
+    else:
+        print(f"No relations file provided or file does not exist, skipping relations import.");
 
 if __name__ == "__main__":
     main()

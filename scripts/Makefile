@@ -8,6 +8,14 @@ BACKUP_COUNT = 3
 
 all: scrape build_database
 
+backup:
+	@echo "Creating backup of the database..."
+	$(CC) backup_database.py --db-path $(TARGET_DB) --keep-count $(BACKUP_COUNT)
+
+restore:
+	@echo "Restoring the most recent backup of the database..."
+	$(CC) backup_database.py --db-path $(TARGET_DB) --restore
+
 scrape: scrape_anime scrape_relations
 
 scrape_anime:
@@ -22,12 +30,9 @@ scrape_relations:
 	# Second pass scrape relations data using the previously scraped anime data
 	$(CC) scraper.py --output $(RELATION_JSON) --scrape-target=relations --anime-data=$(TARGET_JSON)
 
-build_database:
-	@echo "Building SQLite database from JSONL file..."
-	$(CC) import_to_sqlite.py --input $(TARGET_JSON) --output $(TARGET_DB)
+build_database: backup
 
-backup:
-	@echo "Creating backup of the database..."
-	$(CC) backup_database.py --db-path $(TARGET_DB) --keep-count $(BACKUP_COUNT)
+	@echo "Building SQLite database from JSONL file..."
+	$(CC) import_to_sqlite.py --input $(TARGET_JSON) --output $(TARGET_DB) --input-relations $(RELATION_JSON)
 
 .PHONY: all scrape build_database backup scrape_anime scrape_relations

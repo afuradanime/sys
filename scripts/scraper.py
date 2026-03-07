@@ -160,8 +160,10 @@ def extract_anime_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_scraper(args):
     if args.scrape_target == "anime":
+        
         scrape_anime(args.output);
     elif args.scrape_target == "relations":
+
         if not args.anime_data:
             print("--anime-data is required when scraping relations.");
             return;

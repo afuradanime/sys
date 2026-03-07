@@ -4,4 +4,5 @@
 3. Removida tabela language
 4. Adicionada informação extra sobre estúdios, productores e licenciadores, também adicionada informação de relação de animes. Tempo de execução do scraper.py altamente aumentado. 
 
-Mudança de planos, estava a demorar wayyyy too much. Vou fazer uma flag para escolher ir buscar cada tipo de informação uma de cada vez e esperançosamente fica tudo +/- igual
+Mudança de planos: estava a demorar wayyyy too much. Vou fazer uma flag para escolher ir buscar cada tipo de informação uma de cada vez e esperançosamente fica tudo +/- igual.
+Mudança de planos 2: Não vou meter os dados das entidades ainda, mas as relações consegui arranjar com um target separado. Unico problema é que demorou várias horas, deixei a correr durante a noite. Depois na decisão do synchronizer deviamos decidir frequencias diferentes de "partial sync" (arranjar os novos e actualizar os airing rn) e o "full sync" reescrever absolutamente tudo
